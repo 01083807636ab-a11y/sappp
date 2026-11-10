@@ -1,4 +1,4 @@
-"""냉장고 식재료 알 | 실행: streamlit run app.py
+"""냉장고 식재료 알림 | 실행: streamlit run app.py
 SQLite 로컬 저장. Streamlit Community Cloud 로컬 디스크는 영구 저장소가 아닙니다.
 """
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="냉장고 식재료 알", page_icon="🥬", layout="wide")
+st.set_page_config(page_title="냉장고 식재료 알림", page_icon="🥬", layout="wide")
 DB_PATH = Path(os.environ.get("FRIDGE_DB_PATH", "fridge_data.sqlite3"))
 UNITS = ["개", "g", "kg", "ml", "L", "봉", "팩", "병"]
 LOCATIONS = ["냉장", "냉동", "실온"]
@@ -177,211 +177,105 @@ def restore_backup(raw):
             c.executemany(sql, [[r[k] for k in fields] for r in data[table]])
 
 
+
 initialize()
-st.markdown("""<style>
-.stApp {background-color:#f7f9f5;} h1,h2,h3 {color:#244d38;}
-[data-testid="stMetric"] {background:white;border:1px solid #dde8de;border-radius:14px;padding:16px;}
-.stButton>button[kind="primary"] {background:#28734b;border-color:#28734b;}
-</style>""", unsafe_allow_html=True)
-st.title("🥬 냉장고 식재료 알")
-st.caption("무엇이 있는지 한눈에 · 기한 전에 맛있게 · 사용과 폐기까지 기록")
-if "notice" in st.session_state:
-    st.success(st.session_state.pop("notice"))
-st.info("가족 한 가구용 공유 재고입니다. 공개 배포하면 방문자 모두 같은 데이터를 보고 수정할 수 있으므로 비공개 접근 설정을 권장합니다.")
+st.title("🥬 냉장고 식재료 알림")
+st.caption("재료를 등록하고, 기한을 확인하고, 사용하면 끝!")
+if 'notice' in st.session_state:
+    st.success(st.session_state.pop('notice'))
 
-with st.expander("⚙️ 분류 관리 · 저장 안내 · 백업/복원"):
-    st.caption("식재료 분류는 채소·육류 등의 품목군, 영수증 분류는 마트·온라인 등의 구매 경로입니다. 영수증은 직접 읽어 입력하며 사진 인식 기능은 포함하지 않습니다.")
-    with st.form("category_add", clear_on_submit=True):
-        a,b = st.columns(2)
-        target = a.selectbox("추가할 분류 종류", ["식재료 분류", "영수증 분류"])
-        new_category = b.text_input("새 분류명", max_chars=40)
-        if st.form_submit_button("분류 등록"):
-            try:
-                n = valid_text(new_category, "분류명")
-                table = "categories" if target == "식재료 분류" else "receipt_categories"
-                with connect() as c:
-                    c.execute(f"INSERT INTO {table}(name) VALUES(?)", (n,))
-                st.session_state.notice = "분류를 등록했습니다."
-                st.rerun()
-            except (ValueError, sqlite3.Error) as e:
-                st.error(f"등록하지 못했습니다: {e}")
-    st.write("식재료: " + " · ".join(names("categories")))
-    st.write("영수증: " + " · ".join(names("receipt_categories")))
-    st.warning("자동 저장은 SQLite 파일 기준입니다. Streamlit Cloud의 재시작·재배포 시 로컬 데이터가 유실될 수 있습니다. 주기적으로 백업하세요. 상시 영구 보관은 외부 DB 연동이 필요합니다.")
-    st.download_button("📥 전체 데이터 백업(JSON)", make_backup(), file_name=f"fridge_backup_{date.today()}.json", mime="application/json")
-    with st.form("restore"):
-        uploaded = st.file_uploader("이 앱에서 받은 백업 JSON", type=["json"])
-        confirmed = st.checkbox("기존 재고와 이력을 모두 백업 내용으로 교체하는 데 동의합니다.")
-        if st.form_submit_button("백업 복원"):
-            if not confirmed or uploaded is None:
-                st.error("백업 파일과 교체 동의를 확인해 주세요.")
-            else:
-                try:
-                    restore_backup(uploaded.getvalue())
-                    st.session_state.pop("draft", None)
-                    st.session_state["editor_revision"] = st.session_state.get("editor_revision", 0) + 1
-                    st.session_state.notice = "백업을 복원했습니다."
-                    st.rerun()
-                except (ValueError, TypeError, KeyError, sqlite3.Error) as e:
-                    st.error(f"복원하지 못했습니다. 기존 데이터는 유지됩니다: {e}")
-
-items = records("items")
-active = [i for i in items if i["quantity"] > 0]
-today = date.today()
-c1,c2,c3 = st.columns([2,1,1])
-with c1:
-    st.subheader("🔔 오늘의 냉장고")
-with c2:
-    days = st.number_input("임박 알림 기준(일)", min_value=0, max_value=30, value=3)
-with c3:
-    if st.button("↻ 재고 새로고침", use_container_width=True):
-        st.rerun()
-expired = [i for i in active if date.fromisoformat(i["expiry_date"]) < today]
-soon = [i for i in active if 0 <= (date.fromisoformat(i["expiry_date"]) - today).days <= days]
-m1,m2,m3,m4 = st.columns(4)
-m1.metric("보유 품목", f"{len(active)}건")
-m2.metric("기한 임박", f"{len(soon)}건")
-m3.metric("기한 경과", f"{len(expired)}건")
-logs = records("logs")
-m4.metric("사용 / 폐기 기록", f"{sum(x['action']=='사용' for x in logs)} / {sum(x['action']=='폐기' for x in logs)}건")
-if expired:
-    st.error("기한 경과: " + ", ".join(f"{i['name']} ({i['expiry_date']})" for i in expired))
-if soon:
-    st.warning("먼저 확인하세요: " + ", ".join(f"{i['name']} (D-{(date.fromisoformat(i['expiry_date'])-today).days})" for i in soon))
-if not expired and not soon:
-    st.success("설정한 기준 내에 기한이 임박하거나 지난 식재료가 없습니다.")
-st.caption("알림은 앱을 열거나 새로고침할 때 계산되는 화면 내 알림입니다. 앱 종료 중 푸시·문자·이메일은 발송하지 않습니다. 기한만으로 식품의 안전성을 판정할 수 없습니다.")
-
-st.divider()
-st.subheader("① 식재료 입력 → 확인 → 저장")
-with st.form("add_item", clear_on_submit=False):
-    a,b,c = st.columns(3)
-    name = a.text_input("상세 상품명 *", placeholder="예: 서울우유 저지방 1L", max_chars=150)
-    category = b.selectbox("식재료 분류", names("categories"))
-    source = c.selectbox("입력 방식", SOURCES)
-    a,b,c = st.columns(3)
-    receipt_category = a.selectbox("영수증 분류", names("receipt_categories"))
-    receipt_ref = b.text_input("매장명 / 영수증 메모", placeholder="예: 동네마트, 토요일 장보기", max_chars=150)
-    location = c.selectbox("보관 장소", LOCATIONS)
-    a,b,c,d = st.columns(4)
-    quantity = a.number_input("수량", min_value=0.001, max_value=1_000_000.0, value=1.0, step=1.0)
-    unit = b.selectbox("단위", UNITS)
-    bought = c.date_input("구매일", value=today)
-    expiry = d.date_input("소비기한 / 관리 기한", value=today + timedelta(days=7))
-    memo = st.text_input("보관 메모", placeholder="예: 개봉 후 3일 이내 확인", max_chars=300)
-    if st.form_submit_button("확인 목록에 추가", type="primary"):
-        row = dict(zip(COLUMNS, [name, category, source, receipt_category if source == SOURCES[1] else "", receipt_ref, quantity, unit, location, bought, expiry, memo]))
+with st.expander("⚙️ 설정 · 백업", expanded=False):
+    days = st.number_input("기한 며칠 전부터 알려줄까요?", 0, 30, 3)
+    st.download_button("전체 데이터 백업", make_backup(), "fridge_backup.json", "application/json")
+    st.caption("기존 앱과 같은 데이터베이스·백업 형식을 사용합니다. 클라우드 재배포 전에 백업하세요.")
+    uploaded = st.file_uploader("백업 복원", type=['json'])
+    confirmed = st.checkbox("복원하면 현재 데이터가 백업 내용으로 교체됨을 확인했어요")
+    if st.button("복원하기", disabled=not (uploaded and confirmed)):
         try:
-            normalize(row)
-            st.session_state.setdefault("draft", []).append(row)
-            st.session_state["editor_revision"] = st.session_state.get("editor_revision", 0) + 1
-            st.success("아래 확인 목록에 추가했습니다. 확인 후 저장을 눌러 주세요.")
-        except (ValueError, TypeError) as e:
+            restore_backup(uploaded.getvalue())
+            st.session_state.notice = "백업을 복원했어요."
+            st.rerun()
+        except (ValueError, KeyError, TypeError, sqlite3.Error) as e:
             st.error(str(e))
 
-if st.session_state.get("draft"):
-    st.caption("아래 표를 직접 수정할 수 있습니다. 삭제 체크 후 ‘확인한 식재료 저장’을 누르면 체크한 행은 제외됩니다. 같은 상품도 구매 묶음별로 따로 저장합니다.")
-    draft = pd.DataFrame(st.session_state.draft)
-    draft.insert(0, "제외", False)
-    edited = st.data_editor(draft, column_config=editor_config(), hide_index=True, use_container_width=True, key=f"draft_editor_{st.session_state.get('editor_revision', 0)}")
-    a,b = st.columns([1,3])
-    if a.button("확인한 식재료 저장", type="primary"):
+st.subheader("➕ 재료 등록")
+with st.form("add", clear_on_submit=True):
+    name = st.text_input("재료 이름", placeholder="예: 우유, 달걀, 당근")
+    a,b = st.columns(2)
+    expiry = a.date_input("제품에 표시된 기한", date.today()+timedelta(days=7))
+    quantity = b.number_input("수량", min_value=0.001, max_value=1000000.0, value=1.0, step=1.0)
+    with st.expander("추가 정보 (선택)"):
+        a,b,c = st.columns(3)
+        unit = a.selectbox("단위", UNITS)
+        location = b.selectbox("보관 장소", LOCATIONS)
+        category = c.selectbox("분류", names('categories'))
+        source = st.selectbox("입력 방식", SOURCES)
+        receipt = st.selectbox("구매처 · 영수증 분류", names('receipt_categories'))
+    submitted = st.form_submit_button("등록하기", type="primary", use_container_width=True)
+    if submitted:
         try:
-            rows = [normalize(r) for r in edited.to_dict("records") if not r["제외"]]
-            if not rows:
-                raise ValueError("저장할 행이 없습니다.")
-            with connect() as c:
-                c.executemany("INSERT INTO items(" + ",".join(DB_FIELDS) + ",created_at) VALUES(" + ",".join("?" for _ in range(12)) + ")",
-                              [r + (datetime.now().isoformat(timespec="seconds"),) for r in rows])
-            st.session_state.draft = []
-            st.session_state.notice = f"{len(rows)}개 품목을 저장했습니다."
+            clean_name = valid_text(name, '재료 이름')
+            with connect() as conn:
+                conn.execute("INSERT INTO items (" + ','.join(DB_FIELDS) + ",created_at) VALUES (" + ','.join(['?']*12) + ")", (clean_name, category, source, receipt if source==SOURCES[1] else '', '', quantity, unit, location, date.today().isoformat(), expiry.isoformat(), '', datetime.now().isoformat(timespec='seconds')))
+            st.session_state.notice = f"{clean_name} 등록 완료!"
             st.rerun()
-        except (ValueError, TypeError, sqlite3.Error) as e:
-            st.error(f"저장하지 못했습니다: {e}")
-    if b.button("확인 목록 비우기"):
-        st.session_state.draft = []
-        st.rerun()
+        except (ValueError, sqlite3.Error) as e:
+            st.error(str(e))
 
-st.divider()
-st.subheader("② 재고 목록 · 정보 수정")
-a,b,c,d = st.columns(4)
-query = a.text_input("상품명 검색", placeholder="상품명 일부")
-cat_filter = b.selectbox("분류 필터", ["전체"] + names("categories"))
-loc_filter = c.selectbox("보관 필터", ["전체"] + LOCATIONS)
-status_filter = d.selectbox("기한 필터", ["전체", "기한 임박", "기한 경과", "기한 여유"])
-view=[]
-for i in active:
-    delta=(date.fromisoformat(i["expiry_date"])-today).days
-    status="기한 경과" if delta < 0 else "기한 임박" if delta <= days else "기한 여유"
-    if query.casefold() not in i["name"].casefold() or (cat_filter != "전체" and i["category"] != cat_filter) or (loc_filter != "전체" and i["location"] != loc_filter) or (status_filter != "전체" and status != status_filter):
+items = [i for i in records('items') if i['quantity']>0]
+today = date.today()
+items.sort(key=lambda i:(i['expiry_date'],i['id']))
+overdue = [i for i in items if date.fromisoformat(i['expiry_date'])<today]
+soon = [i for i in items if 0 <= (date.fromisoformat(i['expiry_date'])-today).days <= days]
+if overdue:
+    st.error('기한 지남: ' + ', '.join(i['name'] for i in overdue))
+if soon:
+    st.warning('곧 기한 도래: ' + ', '.join(i['name'] for i in soon))
+st.subheader(f"🧊 냉장고 재료 {len(items)}종")
+search = st.text_input("재료 검색", placeholder="찾는 재료 이름")
+if not items:
+    st.info("냉장고가 비어 있어요. 위에서 첫 재료를 등록해 보세요.")
+for item in items:
+    if search.strip().casefold() not in item['name'].casefold():
         continue
-    view.append({"ID":i["id"], "상품명":i["name"], "분류":i["category"], "잔여 수량":i["quantity"], "단위":i["unit"], "보관":i["location"], "기한":i["expiry_date"], "남은 일수":delta, "상태":status, "입력 방식":i["source"], "영수증 분류":i["receipt_category"], "메모":i["memo"]})
-if view:
-    frame=pd.DataFrame(view).sort_values(["기한", "상품명"])
-    st.dataframe(frame, hide_index=True, use_container_width=True)
-    st.download_button("현재 조회 결과 CSV", frame.to_csv(index=False).encode("utf-8-sig"), "fridge_inventory.csv", "text/csv")
-else:
-    st.info("조회 조건에 맞는 재고가 없습니다. 식재료를 등록하거나 필터를 바꿔 주세요.")
-
-if active:
-    by_id={i["id"]: i for i in active}
-    with st.expander("✏️ 저장한 상품 정보 수정 (수량은 아래 사용·폐기로 변경)"):
-        selected=st.selectbox("수정할 품목", list(by_id), format_func=lambda k:f"#{k} {by_id[k]['name']} · {by_id[k]['expiry_date']}", key="edit_id")
-        i=by_id[selected]
-        with st.form(f"edit_{selected}_{st.session_state.get('editor_revision', 0)}"):
-            base=dict(zip(COLUMNS, [i[k] for k in DB_FIELDS]))
-            base["구매일"]=date.fromisoformat(base["구매일"])
-            base["기한"]=date.fromisoformat(base["기한"])
-            changed=st.data_editor(pd.DataFrame([base]), disabled=["수량", "단위"], column_config=editor_config(), hide_index=True, use_container_width=True, key=f"saved_{selected}_{st.session_state.get('editor_revision', 0)}")
-            st.caption("사용·폐기 이력의 일관성을 위해 저장된 수량과 단위는 이 표에서 수정하지 않습니다. 잘못 등록한 수량은 사유를 적어 폐기 처리한 뒤 재등록해 주세요.")
-            if st.form_submit_button("상품 정보 수정 저장"):
-                try:
-                    vals=normalize(changed.to_dict("records")[0])
-                    # Never overwrite quantity/unit: another session may have consumed stock.
-                    fields=[k for k in DB_FIELDS if k not in {"quantity", "unit"}]
-                    updates=[v for k,v in zip(DB_FIELDS, vals) if k in fields]
-                    with connect() as conn:
-                        conn.execute("UPDATE items SET " + ",".join(f"{k}=?" for k in fields) + " WHERE id=?", updates+[selected])
-                    st.session_state["editor_revision"]=st.session_state.get("editor_revision",0)+1
-                    st.session_state.notice="상품 정보를 수정했습니다."
-                    st.rerun()
-                except (ValueError, TypeError, sqlite3.Error) as e:
-                    st.error(f"수정하지 못했습니다: {e}")
-
-st.divider()
-st.subheader("③ 사용 · 폐기 처리")
-if active:
-    by_id={i["id"]:i for i in active}
-    chosen=st.selectbox("처리할 재고", list(by_id), format_func=lambda k:f"#{k} {by_id[k]['name']} | {by_id[k]['quantity']:g}{by_id[k]['unit']} | 기한 {by_id[k]['expiry_date']}", key="process_id")
-    i=by_id[chosen]
-    with st.form(f"process_{chosen}", clear_on_submit=True):
-        a,b,c=st.columns([1,1,2])
-        action=a.radio("처리 구분", ["사용", "폐기"], horizontal=True)
-        amount=b.number_input(f"처리 수량 ({i['unit']})", min_value=0.0, max_value=float(i["quantity"]), value=float(i["quantity"]), format="%.3f")
-        reason=c.text_input("사용처 / 폐기 사유", placeholder="예: 저녁 카레 / 변질 / 오등록 수량 정정", max_chars=300)
-        confirm=st.checkbox("선택한 품목과 처리 수량을 확인했습니다.")
-        if st.form_submit_button("재고 차감 및 기록", type="primary"):
-            if not confirm:
-                st.error("처리 내용을 확인해 주세요.")
-            else:
-                try:
-                    change_stock(chosen, action, amount, reason)
-                    st.session_state.notice=f"{i['name']} {amount:g}{i['unit']} {action} 기록을 저장했습니다."
-                    st.rerun()
-                except (ValueError, sqlite3.Error) as e:
-                    st.error(str(e))
-else:
-    st.caption("보유 재고를 등록하면 사용·폐기를 기록할 수 있습니다.")
-
-st.subheader("④ 사용 · 폐기 기록")
-a,b=st.columns(2)
-log_kind=a.selectbox("기록 구분", ["전체", "사용", "폐기"])
-log_query=b.text_input("기록 상품명 검색")
-history=[{"일시":r["created_at"].replace("T"," "), "상품명":r["item_name"], "구분":r["action"], "수량":r["quantity"], "단위":r["unit"], "사용처 / 사유":r["reason"], "재고 ID":r["item_id"]} for r in reversed(logs) if (log_kind=="전체" or r["action"]==log_kind) and log_query.casefold() in r["item_name"].casefold()]
-if history:
-    history_df=pd.DataFrame(history)
-    st.dataframe(history_df, hide_index=True, use_container_width=True)
-    st.download_button("조회한 기록 CSV", history_df.to_csv(index=False).encode("utf-8-sig"), "fridge_history.csv", "text/csv")
-else:
-    st.caption("조회 조건에 맞는 기록이 없습니다. 재고를 사용하거나 폐기하면 자동으로 남습니다.")
-st.caption("🥬 냉장고 식재료 알 · 재고는 구매 묶음별 관리 · 수량 0 품목은 목록에서 숨기고 이력은 유지합니다.")
+    diff = (date.fromisoformat(item['expiry_date'])-today).days
+    badge = f"🔴 {abs(diff)}일 지남" if diff<0 else ('🟠 오늘까지' if diff==0 else f"{'🟡' if diff<=days else '🟢'} {diff}일 남음")
+    with st.container(border=True):
+        st.markdown(f"**{item['name']}** · {item['quantity']:g}{item['unit']}")
+        st.caption(f"{badge} | {item['expiry_date']} | {item['location']}")
+        a,b = st.columns(2)
+        if a.button("✅ 전부 사용", key=f"use{item['id']}", use_container_width=True):
+            try:
+                change_stock(item['id'],'사용',item['quantity'],'')
+                st.session_state.notice = '사용 기록을 저장했어요.'
+                st.rerun()
+            except ValueError as e:
+                st.error(str(e))
+        with b.popover("수정 · 일부 사용 · 폐기", use_container_width=True):
+            with st.form(f"manage{item['id']}"):
+                new_name = st.text_input("재료 이름", item['name'])
+                new_date = st.date_input("기한", date.fromisoformat(item['expiry_date']))
+                action = st.selectbox("할 일", ['정보 수정','일부 사용','폐기'])
+                amount = st.number_input("처리 수량 (사용·폐기할 때)", min_value=0.001, max_value=float(item['quantity']), value=float(item['quantity']), step=0.001, format='%g')
+                if st.form_submit_button("적용"):
+                    try:
+                        if action=='정보 수정':
+                            cleaned = valid_text(new_name,'재료 이름')
+                            with connect() as conn:
+                                conn.execute('UPDATE items SET name=?, expiry_date=? WHERE id=?',(cleaned,new_date.isoformat(),item['id']))
+                        else:
+                            change_stock(item['id'],'사용' if action=='일부 사용' else '폐기',amount,'')
+                        st.session_state.notice = '저장했어요.'
+                        st.rerun()
+                    except (ValueError, sqlite3.Error) as e:
+                        st.error(str(e))
+with st.expander("📋 사용 · 폐기 기록"):
+    logs = list(reversed(records('logs')))
+    if logs:
+        df = pd.DataFrame(logs)[['created_at','item_name','action','quantity','unit']]
+        df.columns = ['처리 시간','재료','구분','수량','단위']
+        st.dataframe(df, hide_index=True, use_container_width=True)
+    else:
+        st.caption('아직 기록이 없어요.')
+st.caption("알림은 앱을 열거나 새로고침할 때 표시됩니다. 기한만으로 섭취 안전성을 보장하지 않습니다.")
+st.caption("로그인 없는 공유 앱은 방문자들이 같은 재고를 봅니다. 클라우드 로컬 저장은 유실될 수 있으며 GitHub에 데이터가 자동 저장되지는 않습니다.")
